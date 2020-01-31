@@ -204,14 +204,29 @@ const useTrackerWithDeps: useTrackerSignature = (reactiveFn, deps: Array<any>, c
     // stop the old one.
     dispose(refs);
 
-    track(refs, forceUpdate, tracked)
+    let suspended = false;
+
+    // For suspense, we want to catch the Promise, and when it resolves
+    // dispose of it, so it can get recreated in the next render...
+    try {
+      track(refs, forceUpdate, tracked)
+    } catch (e) {
+      if (typeof e.then === 'function') {
+        suspended = true;
+        throw e.then(() => {
+          Meteor.defer(() => dispose(refs));
+        });
+      } else {
+        throw e;
+      }
+    }
 
     // Tracker creates side effect in render, which can be problematic in some cases, such as
     // Suspense or concurrent rendering or if an error is thrown and handled by an error boundary.
     // We still want synchronous rendering for a number of reasons (see readme). useTracker works
     // around memory/resource leaks by setting a time out to automatically clean everything up,
     // and watching a set of references to make sure everything is choreographed correctly.
-    if (!refs.isMounted) {
+    if (!suspended && !refs.isMounted) {
       // Components yield to allow the DOM to update and the browser to paint before useEffect
       // is run. In concurrent mode this can take quite a long time. 1000ms should be enough
       // in most cases.
